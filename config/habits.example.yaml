@@ -1,0 +1,14 @@
+# Map TickTick habits to Slack channels and message templates.
+# Duplicate this file to config/habits.yaml and edit as needed.
+habits:
+  - title: "Meditation"
+    # Optional: include the TickTick habit UUID for faster lookups.
+    # habit_id: "abcdef12-3456-7890-abcd-ef1234567890"
+    slack_channel: "#accountability"
+    # Optional per-habit override; falls back to default_template when missing.
+    message_template: "*{title}*: {status} (value: {value})"
+  - title: "Workout"
+    slack_channel: "#fitness"
+
+# Default template used when a habit entry omits message_template.
+default_template: "*{title}*: {status}"
