@@ -6,29 +6,16 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import requests
 from dotenv import load_dotenv
 
 TICKTICK_URL = "https://api.ticktick.com/api/v2/habitCheckins/query"
 HABIT_IDS = [
-    "637ef6118a908f20373d81dc",
-    "640ffd278a908f61790f00d0",
-    "641940bd8a908f2bab1e575b",
-    "641b30e98a908f1dd7ac8bc1",
-    "67bc796e23391102791e4af7",
-    "67cee3aa2a5f5f4562f2fc2e",
-    "681867482a5f5f6857cf655c",
     "6818675a2a5f5f6857cf65c6",
-    "6821ebbce3e69114f9f0879e",
-    "6821ec20ee96d114f9f087e0",
-    "6824adc64201510b3c8b1dcc",
-    "682df3d57592515e6eefdc73",
-    "686632312a5f5f3a83557f7c",
-    "68d0df32bc58174aaad4b482",
-    "68d0df56bc58174aaad4b575",
     "68da4ee8bc5817419d344d05",
+    
 ]
 AFTER_STAMP = 20250923
 
@@ -69,6 +56,7 @@ HABIT_SLACK_CHANNELS: Dict[str, str] = {
 }
 
 SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
+HABIT_MAPPING_PATH = "habit_id_mapping.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -108,8 +96,43 @@ def build_summary(checkins: Dict[str, List[dict]]) -> Dict[str, Any]:
     return summary
 
 
-def post_to_slack(token: str, channel: str, habit_id: str, summary: List[Dict[str, Any]]) -> None:
-    text = f"*Habit* `{habit_id}`\n```{json.dumps(summary, ensure_ascii=False, indent=2)}```"
+def load_habit_mapping(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError as err:
+        raise FileNotFoundError(
+            f"Habit mapping file not found at {path}. Run scripts/get_habits.py first."
+        ) from err
+
+    if not isinstance(data, dict):
+        raise ValueError("habit_id_mapping.json must contain a JSON object keyed by habit id")
+    return data
+
+
+def latest_entry(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not entries:
+        return None
+    return max(entries, key=lambda item: item.get("checkinStamp", 0))
+
+
+def post_to_slack(
+    token: str,
+    channel: str,
+    habit_name: str,
+    value: Optional[float],
+    goal: Optional[float],
+) -> None:
+    def fmt(number: Optional[float]) -> str:
+        if number is None:
+            return "-"
+        if isinstance(number, float) and number.is_integer():
+            return str(int(number))
+        return str(number)
+
+    value_text = fmt(value)
+    goal_text = fmt(goal)
+    text = f"{habit_name} : {value_text}/{goal_text}"
     response = requests.post(
         SLACK_POST_MESSAGE_URL,
         headers={
@@ -122,7 +145,7 @@ def post_to_slack(token: str, channel: str, habit_id: str, summary: List[Dict[st
     data = response.json()
     if not data.get("ok"):
         raise RuntimeError(f"Slack API error for channel {channel}: {data}")
-    logger.info("Posted summary for %s to %s", habit_id, channel)
+    logger.info("Posted summary for %s to %s", habit_name, channel)
 
 
 def main() -> None:
@@ -132,6 +155,8 @@ def main() -> None:
         logger.error("SLACK_BOT_TOKEN is required to send updates to Slack")
         sys.exit(1)
 
+    habit_mapping = load_habit_mapping(HABIT_MAPPING_PATH)
+
     checkins = fetch_checkins()
     summary = build_summary(checkins)
     for habit_id, entries in summary.items():
@@ -139,7 +164,20 @@ def main() -> None:
         if not channel:
             logger.warning("No Slack channel mapped for habit %s; skipping", habit_id)
             continue
-        post_to_slack(slack_token, channel, habit_id, entries)
+
+        mapping_entry = habit_mapping.get(habit_id, {})
+        habit_name = mapping_entry.get("name") or habit_id
+        latest = latest_entry(entries)
+        if latest:
+            post_to_slack(
+                slack_token,
+                channel,
+                habit_name,
+                latest.get("value"),
+                latest.get("goal"),
+            )
+        else:
+            post_to_slack(slack_token, channel, habit_name, None, None)
 
     # Also print the aggregated summary for reference.
     print(json.dumps(summary, ensure_ascii=False, indent=2))
