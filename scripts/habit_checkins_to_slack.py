@@ -12,11 +12,6 @@ import requests
 from dotenv import load_dotenv
 
 TICKTICK_URL = "https://api.ticktick.com/api/v2/habitCheckins/query"
-HABIT_IDS = [
-    "6818675a2a5f5f6857cf65c6",
-    "68da4ee8bc5817419d344d05",
-    
-]
 AFTER_STAMP = 20250923
 
 TICKTICK_HEADERS = {
@@ -35,36 +30,17 @@ TICKTICK_HEADERS = {
     ),
 }
 
-# Map each habit ID to the Slack channel that should receive updates.
-HABIT_SLACK_CHANNELS: Dict[str, str] = {
-    "637ef6118a908f20373d81dc": "#habit-updates",
-    "640ffd278a908f61790f00d0": "#habit-updates",
-    "641940bd8a908f2bab1e575b": "#habit-updates",
-    "641b30e98a908f1dd7ac8bc1": "#habit-updates",
-    "67bc796e23391102791e4af7": "#habit-updates",
-    "67cee3aa2a5f5f4562f2fc2e": "#habit-updates",
-    "681867482a5f5f6857cf655c": "#habit-updates",
-    "6818675a2a5f5f6857cf65c6": "#habit-updates",
-    "6821ebbce3e69114f9f0879e": "#habit-updates",
-    "6821ec20ee96d114f9f087e0": "#habit-updates",
-    "6824adc64201510b3c8b1dcc": "#habit-updates",
-    "682df3d57592515e6eefdc73": "#habit-updates",
-    "686632312a5f5f3a83557f7c": "#habit-updates",
-    "68d0df32bc58174aaad4b482": "#habit-updates",
-    "68d0df56bc58174aaad4b575": "#habit-updates",
-    "68da4ee8bc5817419d344d05": "#habit-updates",
-}
-
 SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
 HABIT_MAPPING_PATH = "habit_id_mapping.json"
+HABIT_CHANNELS_PATH = "config/habit_channels.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def fetch_checkins() -> Dict[str, List[dict]]:
-    payload = {"habitIds": HABIT_IDS, "afterStamp": AFTER_STAMP}
-    logger.info("Querying TickTick for %d habits", len(HABIT_IDS))
+def fetch_checkins(habit_ids: List[str]) -> Dict[str, List[dict]]:
+    payload = {"habitIds": habit_ids, "afterStamp": AFTER_STAMP}
+    logger.info("Querying TickTick for %d habits", len(habit_ids))
     response = requests.post(TICKTICK_URL, headers=TICKTICK_HEADERS, json=payload, timeout=30)
     response.raise_for_status()
     data = response.json()
@@ -108,6 +84,20 @@ def load_habit_mapping(path: str) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("habit_id_mapping.json must contain a JSON object keyed by habit id")
     return data
+
+
+def load_channel_mapping(path: str) -> Dict[str, str]:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError as err:
+        raise FileNotFoundError(
+            f"Habit channel mapping file not found at {path}."
+        ) from err
+
+    if not isinstance(data, dict):
+        raise ValueError("habit_channels.json must contain a JSON object keyed by habit id")
+    return {str(key): str(value) for key, value in data.items()}
 
 
 def latest_entry(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -155,12 +145,20 @@ def main() -> None:
         logger.error("SLACK_BOT_TOKEN is required to send updates to Slack")
         sys.exit(1)
 
+    channels_path = os.getenv("HABIT_CHANNELS_PATH", HABIT_CHANNELS_PATH)
+    try:
+        channel_mapping = load_channel_mapping(channels_path)
+    except (FileNotFoundError, ValueError) as err:
+        logger.error("%s", err)
+        sys.exit(1)
+
     habit_mapping = load_habit_mapping(HABIT_MAPPING_PATH)
 
-    checkins = fetch_checkins()
+    habit_ids = list(channel_mapping.keys())
+    checkins = fetch_checkins(habit_ids)
     summary = build_summary(checkins)
     for habit_id, entries in summary.items():
-        channel = HABIT_SLACK_CHANNELS.get(habit_id)
+        channel = channel_mapping.get(habit_id)
         if not channel:
             logger.warning("No Slack channel mapped for habit %s; skipping", habit_id)
             continue
