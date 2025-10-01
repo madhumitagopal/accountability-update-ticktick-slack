@@ -26,5 +26,5 @@ jobs:
       - name: Post TickTick habit summary to Slack
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          TICKTICK_COOKIE: ${{ secrets.TICKTICK_COOKIE }}
+          COOKIE: ${{ secrets.COOKIE }}
         run: python scripts/habit_checkins_to_slack.py
