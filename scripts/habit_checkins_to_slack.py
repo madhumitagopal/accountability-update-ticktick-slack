@@ -57,27 +57,22 @@ def parse_stamp(raw_stamp: Any) -> Optional[int]:
 
 
 def build_summary(checkins: Dict[str, List[dict]]) -> Dict[str, Dict[str, Any]]:
-    """Return today's value (or zero) and a goal for each habit."""
+    """Return today's value (or zero) for each habit."""
 
     today_stamp = int(datetime.now().strftime("%Y%m%d"))
     summary: Dict[str, Dict[str, Any]] = {}
 
     for habit_id, entries in checkins.items():
         value: Any = 0
-        goal: Any = None
 
         if isinstance(entries, list):
             for entry in entries:
-                entry_goal = entry.get("goal")
-                if goal is None and entry_goal is not None:
-                    goal = entry_goal
-
                 if parse_stamp(entry.get("checkinStamp")) == today_stamp:
                     entry_value = entry.get("value")
                     value = entry_value if entry_value not in (None, "") else 0
                     break
 
-        summary[habit_id] = {"value": value, "goal": goal}
+        summary[habit_id] = {"value": value}
 
     return summary
 
@@ -174,8 +169,16 @@ def main() -> None:
 
         mapping_entry = habit_mapping.get(habit_id, {})
         habit_name = mapping_entry.get("name") or habit_id
-        value = totals.get("value") if isinstance(totals, dict) else None
-        goal = totals.get("goal") if isinstance(totals, dict) else None
+
+        value = totals.get("value") if isinstance(totals, dict) else 0
+
+        goal: Any = mapping_entry.get("goal")
+        if goal is None:
+            goal = mapping_entry.get("step")
+
+        if isinstance(totals, dict):
+            totals["goal"] = goal
+
         post_to_slack(slack_token, channel, habit_name, value, goal)
 
     # Also print the aggregated summary for reference.
