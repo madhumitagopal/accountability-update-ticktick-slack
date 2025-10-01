@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 TICKTICK_URL = "https://api.ticktick.com/api/v2/habitCheckins/query"
 AFTER_STAMP = 20250923
 
-TICKTICK_HEADERS = {
+BASE_TICKTICK_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
@@ -23,10 +23,6 @@ TICKTICK_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
-    ),
-    "Cookie": (
-        "tt_distid=help-68da95c7b98ce051e421fd48; "
-        "t=0CAB80045A64122BADC09F597C27C63936AB438A5226B8D9B08FE894CC03043742A3818C7FF69F9B2CAF14D923F0D3DA1B263BFD942D3374D9C4BD4C7D153AFC9D94C290994417C272B5ADB49788099DA96445986C05FDCF3219CC42FC1C7A2FEBDD19E1F9A47A01ECFABBF7504359D4711F9CAEDB90785858CAD9E5CECB0A9EEBDD19E1F9A47A01C5727C5DD292B81F11DB04AB803AC01103CED2597B0727F88E540B0C0633D20F2C4A454D958D049DFE2EDA4C4A6B5CD0;"
     ),
 }
 
@@ -38,10 +34,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
-def fetch_checkins(habit_ids: List[str]) -> Dict[str, List[dict]]:
+def fetch_checkins(habit_ids: List[str], cookie_header: str) -> Dict[str, List[dict]]:
     payload = {"habitIds": habit_ids, "afterStamp": AFTER_STAMP}
     logger.info("Querying TickTick for %d habits", len(habit_ids))
-    response = requests.post(TICKTICK_URL, headers=TICKTICK_HEADERS, json=payload, timeout=30)
+    headers = dict(BASE_TICKTICK_HEADERS)
+    headers["Cookie"] = cookie_header
+    response = requests.post(TICKTICK_URL, headers=headers, json=payload, timeout=30)
     response.raise_for_status()
     data = response.json()
     checkins = data.get("checkins")
@@ -145,6 +143,11 @@ def main() -> None:
         logger.error("SLACK_BOT_TOKEN is required to send updates to Slack")
         sys.exit(1)
 
+    ticktick_cookie = os.getenv("COOKIE")
+    if not ticktick_cookie:
+        logger.error("COOKIE environment variable is required to query TickTick")
+        sys.exit(1)
+
     channels_path = os.getenv("HABIT_CHANNELS_PATH", HABIT_CHANNELS_PATH)
     try:
         channel_mapping = load_channel_mapping(channels_path)
@@ -155,7 +158,7 @@ def main() -> None:
     habit_mapping = load_habit_mapping(HABIT_MAPPING_PATH)
 
     habit_ids = list(channel_mapping.keys())
-    checkins = fetch_checkins(habit_ids)
+    checkins = fetch_checkins(habit_ids, ticktick_cookie)
     summary = build_summary(checkins)
     for habit_id, entries in summary.items():
         channel = channel_mapping.get(habit_id)
