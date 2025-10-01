@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -48,25 +49,36 @@ def fetch_checkins(habit_ids: List[str], cookie_header: str) -> Dict[str, List[d
     return checkins
 
 
-def build_summary(checkins: Dict[str, List[dict]]) -> Dict[str, Any]:
-    summary: Dict[str, Any] = {}
+def parse_stamp(raw_stamp: Any) -> Optional[int]:
+    try:
+        return int(raw_stamp)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_summary(checkins: Dict[str, List[dict]]) -> Dict[str, Dict[str, Any]]:
+    """Return today's value (or zero) and a goal for each habit."""
+
+    today_stamp = int(datetime.now().strftime("%Y%m%d"))
+    summary: Dict[str, Dict[str, Any]] = {}
+
     for habit_id, entries in checkins.items():
-        values: List[Dict[str, Any]] = []
+        value: Any = 0
+        goal: Any = None
+
         if isinstance(entries, list):
             for entry in entries:
-                value = entry.get("value")
-                goal = entry.get("goal")
-                checkin_stamp = entry.get("checkinStamp")
-                if value is None and goal is None:
-                    continue
-                values.append(
-                    {
-                        "checkinStamp": checkin_stamp,
-                        "value": value,
-                        "goal": goal,
-                    }
-                )
-        summary[habit_id] = values
+                entry_goal = entry.get("goal")
+                if goal is None and entry_goal is not None:
+                    goal = entry_goal
+
+                if parse_stamp(entry.get("checkinStamp")) == today_stamp:
+                    entry_value = entry.get("value")
+                    value = entry_value if entry_value not in (None, "") else 0
+                    break
+
+        summary[habit_id] = {"value": value, "goal": goal}
+
     return summary
 
 
@@ -96,12 +108,6 @@ def load_channel_mapping(path: str) -> Dict[str, str]:
     if not isinstance(data, dict):
         raise ValueError("habit_channels.json must contain a JSON object keyed by habit id")
     return {str(key): str(value) for key, value in data.items()}
-
-
-def latest_entry(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if not entries:
-        return None
-    return max(entries, key=lambda item: item.get("checkinStamp", 0))
 
 
 def post_to_slack(
@@ -160,7 +166,7 @@ def main() -> None:
     habit_ids = list(channel_mapping.keys())
     checkins = fetch_checkins(habit_ids, ticktick_cookie)
     summary = build_summary(checkins)
-    for habit_id, entries in summary.items():
+    for habit_id, totals in summary.items():
         channel = channel_mapping.get(habit_id)
         if not channel:
             logger.warning("No Slack channel mapped for habit %s; skipping", habit_id)
@@ -168,17 +174,9 @@ def main() -> None:
 
         mapping_entry = habit_mapping.get(habit_id, {})
         habit_name = mapping_entry.get("name") or habit_id
-        latest = latest_entry(entries)
-        if latest:
-            post_to_slack(
-                slack_token,
-                channel,
-                habit_name,
-                latest.get("value"),
-                latest.get("goal"),
-            )
-        else:
-            post_to_slack(slack_token, channel, habit_name, None, None)
+        value = totals.get("value") if isinstance(totals, dict) else None
+        goal = totals.get("goal") if isinstance(totals, dict) else None
+        post_to_slack(slack_token, channel, habit_name, value, goal)
 
     # Also print the aggregated summary for reference.
     print(json.dumps(summary, ensure_ascii=False, indent=2))
