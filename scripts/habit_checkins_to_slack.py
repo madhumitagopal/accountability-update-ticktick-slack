@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import smtplib
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests
+from email.message import EmailMessage
 from dotenv import load_dotenv
 
 TICKTICK_URL = "https://api.ticktick.com/api/v2/habitCheckins/query"
@@ -35,12 +37,47 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
+def send_failure_email(error_text: str) -> None:
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = os.getenv("SMTP_PORT", "587")
+    smtp_username = os.getenv("SMTP_USERNAME")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_from = os.getenv("SMTP_FROM_ADDRESS") or smtp_username
+    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
+
+    if not smtp_host or not smtp_from:
+        logger.error(
+            "Unable to send failure email: SMTP_HOST and SMTP_FROM_ADDRESS/SMTP_USERNAME must be set"
+        )
+        return
+
+    message = EmailMessage()
+    message["Subject"] = "dgc bot failed"
+    message["From"] = smtp_from
+    message["To"] = "madhumita@hyperverge.co"
+    message.set_content(error_text)
+
+    try:
+        with smtplib.SMTP(smtp_host, int(smtp_port), timeout=10) as smtp:
+            if use_tls:
+                smtp.starttls()
+            if smtp_username and smtp_password:
+                smtp.login(smtp_username, smtp_password)
+            smtp.send_message(message)
+    except Exception as err:  # pragma: no cover - best-effort notification
+        logger.error("Failed to send failure email: %s", err)
+
+
 def fetch_checkins(habit_ids: List[str], cookie_header: str) -> Dict[str, List[dict]]:
     payload = {"habitIds": habit_ids, "afterStamp": AFTER_STAMP}
     logger.info("Querying TickTick for %d habits", len(habit_ids))
     headers = dict(BASE_TICKTICK_HEADERS)
     headers["Cookie"] = cookie_header
     response = requests.post(TICKTICK_URL, headers=headers, json=payload, timeout=30)
+    if 201 <= response.status_code < 600:
+        error_text = response.text or f"Status {response.status_code}"
+        logger.error("TickTick returned a 5xx error: %s", error_text)
+        send_failure_email(error_text)
     response.raise_for_status()
     data = response.json()
     checkins = data.get("checkins")
