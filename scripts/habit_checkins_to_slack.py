@@ -8,6 +8,7 @@ import os
 import smtplib
 import sys
 from datetime import datetime
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -31,41 +32,10 @@ BASE_TICKTICK_HEADERS = {
 
 SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
 HABIT_MAPPING_PATH = "habit_id_mapping.json"
-HABIT_CHANNELS_PATH = "config/habit_channels.json"
+HABIT_CHANNELS_PATH = "config/habit_channels-prod.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
-
-
-def send_failure_email(error_text: str) -> None:
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_port = os.getenv("SMTP_PORT", "587")
-    smtp_username = os.getenv("SMTP_USERNAME")
-    smtp_password = os.getenv("SMTP_PASSWORD")
-    smtp_from = os.getenv("SMTP_FROM_ADDRESS") or smtp_username
-    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
-
-    if not smtp_host or not smtp_from:
-        logger.error(
-            "Unable to send failure email: SMTP_HOST and SMTP_FROM_ADDRESS/SMTP_USERNAME must be set"
-        )
-        return
-
-    message = EmailMessage()
-    message["Subject"] = "dgc bot failed"
-    message["From"] = smtp_from
-    message["To"] = "madhumita@hyperverge.co"
-    message.set_content(error_text)
-
-    try:
-        with smtplib.SMTP(smtp_host, int(smtp_port), timeout=10) as smtp:
-            if use_tls:
-                smtp.starttls()
-            if smtp_username and smtp_password:
-                smtp.login(smtp_username, smtp_password)
-            smtp.send_message(message)
-    except Exception as err:  # pragma: no cover - best-effort notification
-        logger.error("Failed to send failure email: %s", err)
 
 
 def fetch_checkins(habit_ids: List[str], cookie_header: str) -> Dict[str, List[dict]]:
@@ -77,7 +47,6 @@ def fetch_checkins(habit_ids: List[str], cookie_header: str) -> Dict[str, List[d
     if 201 <= response.status_code < 600:
         error_text = response.text or f"Status {response.status_code}"
         logger.error("TickTick returned a 5xx error: %s", error_text)
-        send_failure_email(error_text)
     response.raise_for_status()
     data = response.json()
     checkins = data.get("checkins")
@@ -142,13 +111,9 @@ def load_channel_mapping(path: str) -> Dict[str, str]:
     return {str(key): str(value) for key, value in data.items()}
 
 
-def post_to_slack(
-    token: str,
-    channel: str,
-    habit_name: str,
-    value: Optional[float],
-    goal: Optional[float],
-) -> None:
+def format_habit_line(
+    habit_name: str, value: Optional[float], goal: Optional[float]
+) -> str:
     def fmt(number: Optional[float]) -> str:
         if number is None:
             return "-"
@@ -158,7 +123,10 @@ def post_to_slack(
 
     value_text = fmt(value)
     goal_text = fmt(goal)
-    text = f"{habit_name} : {value_text}/{goal_text}"
+    return f"- {habit_name} : {value_text}/{goal_text}"
+
+
+def post_to_slack(token: str, channel: str, text: str) -> None:
     response = requests.post(
         SLACK_POST_MESSAGE_URL,
         headers={
@@ -171,7 +139,7 @@ def post_to_slack(
     data = response.json()
     if not data.get("ok"):
         raise RuntimeError(f"Slack API error for channel {channel}: {data}")
-    logger.info("Posted summary for %s to %s", habit_name, channel)
+    logger.info("Posted summary for %s", channel)
 
 
 def main() -> None:
@@ -198,6 +166,8 @@ def main() -> None:
     habit_ids = list(channel_mapping.keys())
     checkins = fetch_checkins(habit_ids, ticktick_cookie)
     summary = build_summary(checkins)
+    channel_messages: Dict[str, List[str]] = defaultdict(list)
+
     for habit_id, totals in summary.items():
         channel = channel_mapping.get(habit_id)
         if not channel:
@@ -216,7 +186,13 @@ def main() -> None:
         if isinstance(totals, dict):
             totals["goal"] = goal
 
-        post_to_slack(slack_token, channel, habit_name, value, goal)
+        channel_messages[channel].append(format_habit_line(habit_name, value, goal))
+
+    for channel, lines in channel_messages.items():
+        if not lines:
+            continue
+        message_text = "\n".join(lines)
+        post_to_slack(slack_token, channel, message_text)
 
     # Also print the aggregated summary for reference.
     print(json.dumps(summary, ensure_ascii=False, indent=2))
