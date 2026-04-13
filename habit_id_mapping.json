@@ -435,7 +435,7 @@
     "type": "Real",
     "unit": "Count"
   },
-  {
+  "69dce95b128b3b632e7c4cdf": {
         "id": "69dce95b128b3b632e7c4cdf",
         "name": "Today, did I do my best to improve efficiency using AI",
         "iconRes": "habit_daily_check_in",
@@ -462,7 +462,7 @@
         "exDates": [],
         "style": 1
     },
-    {
+    "69dceb3f128b3b1dbe170899": {
         "id": "69dceb3f128b3b1dbe170899",
         "name": "Today, did I do my best to give high quality feedback",
         "iconRes": "habit_daily_check_in",
@@ -489,7 +489,7 @@
         "exDates": [],
         "style": 1
     },
-    {
+    "69dceb62128b3b1dbe170a80": {
         "id": "69dceb62128b3b1dbe170a80",
         "name": "Today, did I do my best to delegate routine critical task",
         "iconRes": "habit_daily_check_in",
