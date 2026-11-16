@@ -97,7 +97,7 @@ def load_habit_mapping(path: str) -> Dict[str, Any]:
     return data
 
 
-def load_channel_mapping(path: str) -> Dict[str, str]:
+def load_channel_mapping(path: str) -> Dict[str, List[str]]:
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -108,7 +108,13 @@ def load_channel_mapping(path: str) -> Dict[str, str]:
 
     if not isinstance(data, dict):
         raise ValueError("habit_channels.json must contain a JSON object keyed by habit id")
-    return {str(key): str(value) for key, value in data.items()}
+    result: Dict[str, List[str]] = {}
+    for key, value in data.items():
+        if isinstance(value, list):
+            result[str(key)] = [str(v) for v in value]
+        else:
+            result[str(key)] = [str(value)]
+    return result
 
 
 def format_habit_line(
@@ -169,8 +175,8 @@ def main() -> None:
     channel_messages: Dict[str, List[str]] = defaultdict(list)
 
     for habit_id, totals in summary.items():
-        channel = channel_mapping.get(habit_id)
-        if not channel:
+        channels = channel_mapping.get(habit_id)
+        if not channels:
             logger.warning("No Slack channel mapped for habit %s; skipping", habit_id)
             continue
 
@@ -186,7 +192,9 @@ def main() -> None:
         if isinstance(totals, dict):
             totals["goal"] = goal
 
-        channel_messages[channel].append(format_habit_line(habit_name, value, goal))
+        line = format_habit_line(habit_name, value, goal)
+        for channel in channels:
+            channel_messages[channel].append(line)
 
     for channel, lines in channel_messages.items():
         if not lines:
