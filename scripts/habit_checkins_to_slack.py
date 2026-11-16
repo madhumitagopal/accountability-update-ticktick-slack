@@ -92,9 +92,9 @@ def load_habit_mapping(path: str) -> Dict[str, Any]:
             f"Habit mapping file not found at {path}. Run scripts/get_habits.py first."
         ) from err
 
-    if not isinstance(data, dict):
-        raise ValueError("habit_id_mapping.json must contain a JSON object keyed by habit id")
-    return data
+    if not isinstance(data, list):
+        raise ValueError("habit_id_mapping.json must contain a JSON array of habit objects")
+    return {str(entry["id"]): entry for entry in data if isinstance(entry, dict) and "id" in entry}
 
 
 def load_channel_mapping(path: str) -> Dict[str, List[str]]:
